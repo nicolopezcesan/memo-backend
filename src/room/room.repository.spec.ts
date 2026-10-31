@@ -67,6 +67,26 @@ describe('RoomRepository', () => {
     expect(await repository.get(created.code)).toBeNull();
   });
 
+  it('expires and removes an abandoned room once its TTL elapses', async () => {
+    const created = await repository.create(baseRoomData());
+    // Simulate the TTL having almost lapsed instead of waiting the real 1h.
+    await redis.expire(`room:${created.code}`, 1);
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    expect(await repository.get(created.code)).toBeNull();
+  });
+
+  it('does not refresh the TTL on a read-only get()', async () => {
+    const created = await repository.create(baseRoomData());
+    await redis.expire(`room:${created.code}`, 5);
+
+    await repository.get(created.code);
+
+    const ttl = await redis.ttl(`room:${created.code}`);
+    expect(ttl).toBeLessThanOrEqual(5);
+  });
+
   it('updateAtomic applies the update function and persists it', async () => {
     const created = await repository.create(baseRoomData());
 
