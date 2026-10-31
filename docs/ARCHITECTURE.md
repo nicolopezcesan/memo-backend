@@ -2,14 +2,18 @@
 
 ## Stack
 
-- Node 26 LTS, npm, NestJS + TypeScript (strict mode).
+- Node 26 LTS, npm, NestJS 12 + TypeScript 6 (strict mode, ESM nativo vía `"type": "module"` + `moduleResolution: nodenext`).
 - Socket.IO (via `@nestjs/platform-socket.io`) para realtime.
 - Redis (`ioredis`) como store de estado + `@socket.io/redis-adapter` para distribuir eventos entre instancias.
 - `@nestjs/jwt` para los session tokens de reconexión.
-- `@nestjs/config` + `.env` con validación de schema (Joi o class-validator) para env vars (puerto, Redis URL, JWT secret, CORS origin).
+- `@nestjs/config` + `.env` con validación de schema (Joi) para env vars (puerto, Redis URL, JWT secret, CORS origin).
 - Docker / docker-compose para desarrollo (backend + redis).
-- Jest para unit tests; `socket.io-client` real para e2e.
-- GitHub Actions desde la épica 1: workflow de `npm ci` + lint + unit tests en cada push/PR.
+- Vitest para unit tests y e2e (`socket.io-client` real para e2e); oxlint como linter. Son el default del scaffold oficial de NestJS 12, reemplazando a Jest/ESLint.
+- GitHub Actions desde la épica 1: workflow de `npm ci` + lint + unit tests + e2e (con servicio Redis) en cada push/PR.
+
+### Nota sobre imports ESM de paquetes CJS
+
+Bajo `moduleResolution: nodenext`, algunos paquetes CJS requieren una forma específica de import para que TypeScript resuelva el tipo correcto (más allá de lo que tolera Vitest, que no type-checka): `ioredis` se importa como `import { Redis } from 'ioredis'` (no default), `joi` como `import Joi from 'joi'` (default, no namespace). Verificar siempre con `npx nest build` (type-check real) además de los tests.
 
 ## Módulos
 

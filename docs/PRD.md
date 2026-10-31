@@ -17,7 +17,7 @@ Backend de un juego de memoria ("memory"/"concentration") multiplayer 1v1 en tie
 - Reconexión: un jugador que pierde la conexión puede volver a la misma partida con su sesión (session token) y recuperar el estado exacto.
 - Estado de partidas persistido en Redis, de forma que el backend pueda correr en múltiples instancias detrás de un load balancer (Socket.IO Redis adapter).
 - Limpieza automática de salas/sesiones abandonadas vía TTL (sesión 30min, sala 1h).
-- Suite de tests: unit sobre la lógica pura del juego + e2e sobre el gateway de sockets.
+- Suite de tests (Vitest): unit sobre la lógica pura del juego + e2e sobre el gateway de sockets.
 
 ## Fuera de alcance
 
