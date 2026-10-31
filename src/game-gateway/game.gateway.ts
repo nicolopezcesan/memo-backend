@@ -4,25 +4,53 @@ import {
   MessageBody,
   SubscribeMessage,
   WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
-import type { Socket } from 'socket.io';
-import type { RoomState } from '../game-engine/index.js';
+import type { Server, Socket } from 'socket.io';
+import type { PublicRoomState, RoomState } from '../game-engine/index.js';
+import {
+  CardAlreadyMatchedError,
+  InvalidCardIndexError,
+  NotPlayersTurnError,
+  toPublicRoomState,
+} from '../game-engine/index.js';
+import {
+  GameAlreadyStartedError,
+  GameNotStartedError,
+  NotEnoughPlayersError,
+  NotHostError,
+} from '../game/game.errors.js';
+import { GameService } from '../game/game.service.js';
 import { RoomFullError } from '../room/room.errors.js';
 import { RoomRepository } from '../room/room.repository.js';
 import { SessionService } from '../session/session.service.js';
 import { errAck, type Ack } from './ack.js';
+import { CardFlipDto } from './dto/card-flip.dto.js';
 import { RoomCreateDto } from './dto/room-create.dto.js';
 import { RoomJoinDto } from './dto/room-join.dto.js';
+import { bindSocketIdentity, getSocketIdentity } from './socket-identity.js';
 import { validateDto } from './validate-dto.js';
 
 type RoomCreateAck = Ack<{ roomCode: string; sessionToken: string; playerId: string }>;
-type RoomJoinAck = Ack<{ sessionToken: string; playerId: string; state: RoomState }>;
+type RoomJoinAck = Ack<{
+  sessionToken: string;
+  playerId: string;
+  state: PublicRoomState;
+}>;
+type RoomStartAck = Ack<object>;
+type CardFlipAck = Ack<object>;
+
+const NOT_IN_ROOM = errAck('VALIDATION_ERROR', 'This connection has not created or joined a room yet');
 
 @WebSocketGateway({ cors: { origin: process.env.CORS_ORIGIN } })
 export class GameGateway {
+  @WebSocketServer()
+  private readonly server!: Server;
+
   constructor(
     private readonly rooms: RoomRepository,
     private readonly sessions: SessionService,
+    private readonly game: GameService,
   ) {}
 
   @SubscribeMessage('room:create')
@@ -61,6 +89,7 @@ export class GameGateway {
     await this.rooms.save(room);
 
     await client.join(roomCode);
+    bindSocketIdentity(client, { playerId, roomCode });
 
     return { ok: true, roomCode, sessionToken: session.sessionToken, playerId };
   }
@@ -116,12 +145,105 @@ export class GameGateway {
     }
 
     await client.join(dto.roomCode);
+    bindSocketIdentity(client, { playerId, roomCode: dto.roomCode });
     client.to(dto.roomCode).emit('room:playerJoined', {
       playerId,
       nickname: dto.nickname,
       players: state.players,
     });
 
-    return { ok: true, sessionToken: session.sessionToken, playerId, state };
+    return { ok: true, sessionToken: session.sessionToken, playerId, state: toPublicRoomState(state) };
+  }
+
+  @SubscribeMessage('room:start')
+  async handleRoomStart(@ConnectedSocket() client: Socket): Promise<RoomStartAck> {
+    const identity = getSocketIdentity(client);
+    if (!identity) return NOT_IN_ROOM;
+
+    try {
+      const state = await this.game.startGame(identity.roomCode, identity.playerId);
+      this.server.to(identity.roomCode).emit('game:started', { state: toPublicRoomState(state) });
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof NotHostError) {
+        return errAck('NOT_HOST', error.message);
+      }
+      if (error instanceof GameAlreadyStartedError) {
+        return errAck('GAME_ALREADY_STARTED', error.message);
+      }
+      if (error instanceof NotEnoughPlayersError) {
+        return errAck('NOT_ENOUGH_PLAYERS', error.message);
+      }
+      throw error;
+    }
+  }
+
+  @SubscribeMessage('card:flip')
+  async handleCardFlip(
+    @MessageBody() body: unknown,
+    @ConnectedSocket() client: Socket,
+  ): Promise<CardFlipAck> {
+    const identity = getSocketIdentity(client);
+    if (!identity) return NOT_IN_ROOM;
+
+    const validation = await validateDto(CardFlipDto, body);
+    if (!validation.ok) {
+      return errAck('VALIDATION_ERROR', validation.message);
+    }
+    const { dto } = validation;
+
+    try {
+      const result = await this.game.flipCard(
+        identity.roomCode,
+        identity.playerId,
+        dto.cardIndex,
+      );
+
+      this.server.to(identity.roomCode).emit('card:flipped', {
+        cardIndex: dto.cardIndex,
+        symbol: result.state.deck[dto.cardIndex].symbol,
+        byPlayerId: identity.playerId,
+      });
+
+      if (result.matched !== undefined && result.comparedIndices) {
+        const scores = Object.fromEntries(
+          result.state.players.map((p) => [p.playerId, p.score]),
+        );
+        this.server.to(identity.roomCode).emit('turn:result', {
+          matched: result.matched,
+          cardIndices: result.comparedIndices,
+          scores,
+        });
+
+        if (!result.matched) {
+          this.server.to(identity.roomCode).emit('turn:changed', {
+            currentTurnPlayerId: result.state.currentTurnPlayerId,
+          });
+        }
+
+        if (result.gameEnded) {
+          const finalScores = Object.fromEntries(
+            result.state.players.map((p) => [p.playerId, p.score]),
+          );
+          this.server.to(identity.roomCode).emit('game:ended', {
+            scores: finalScores,
+            winnerId: result.winnerId ?? null,
+          });
+        }
+      }
+
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof GameNotStartedError) {
+        return errAck('GAME_NOT_STARTED', error.message);
+      }
+      if (error instanceof NotPlayersTurnError) {
+        return errAck('INVALID_TURN', error.message);
+      }
+      if (error instanceof InvalidCardIndexError || error instanceof CardAlreadyMatchedError) {
+        return errAck('INVALID_CARD', error.message);
+      }
+      throw error;
+    }
   }
 }

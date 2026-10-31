@@ -38,15 +38,20 @@ Namespace default (`/`), sin namespace custom. CORS leído de env var (`CORS_ORI
 
 Cliente -> Servidor (todos con ack, ver ADR 0005 para el formato de respuesta):
 - `room:create` `{nickname, boardSize}` -> ack `{ok:true, roomCode, sessionToken, playerId}` | `{ok:false, code, message}`
-- `room:join` `{roomCode, nickname}` -> ack `{ok:true, sessionToken, playerId, state}` | `{ok:false, code, message}`
-- `room:start` `{roomCode}` (solo host, requiere 2 jugadores conectados) -> ack `{ok:true}` | `{ok:false, code, message}`
-- `card:flip` `{roomCode, cardIndex}` -> ack `{ok:true}` | `{ok:false, code, message}` (el resultado de la jugada se emite por broadcast, el ack solo confirma si la jugada fue aceptada)
+- `room:join` `{roomCode, nickname}` -> ack `{ok:true, sessionToken, playerId, state}` | `{ok:false, code, message}` (`state` es el `PublicRoomState`, símbolos ocultos salvo cartas matcheadas/flippeadas)
+- `room:start` `{}` (solo host, requiere 2 jugadores conectados) -> ack `{ok:true}` | `{ok:false, code, message}`
+- `card:flip` `{cardIndex}` -> ack `{ok:true}` | `{ok:false, code, message}` (el resultado de la jugada se emite por broadcast, el ack solo confirma si la jugada fue aceptada)
+- `room:start` y `card:flip` **no llevan `roomCode` ni `playerId` en el payload**: esos dos quedan atados a la conexión (`socket.data`) en el momento en que `room:create`/`room:join` tiene éxito. Confiar en un `playerId` que el cliente manda en cada evento permitiría a cualquiera actuar como cualquier jugador con solo pasar el id ajeno.
 - Reconexión: `sessionToken` viaja en `handshake.auth`, no como evento separado.
 
 Servidor -> Sala (broadcast, no ack):
 - `room:playerJoined`, `game:started`, `card:flipped`, `turn:result`, `turn:changed`, `player:disconnected`, `player:reconnected`, `game:ended`.
 - Evento `error {code, message}` reservado para fallas asíncronas que no vienen de un ack puntual (ej. error interno durante un turno ya en curso).
-- Códigos de error: `VALIDATION_ERROR`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `INVALID_TURN`, `INVALID_CARD`, `SESSION_INVALID`, `GAME_NOT_STARTED`. `VALIDATION_ERROR` cubre cualquier payload que no pasa las validaciones de DTO (nickname/boardSize/etc).
+- Códigos de error: `VALIDATION_ERROR`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `NOT_HOST`, `GAME_ALREADY_STARTED`, `NOT_ENOUGH_PLAYERS`, `INVALID_TURN`, `INVALID_CARD`, `SESSION_INVALID`, `GAME_NOT_STARTED`. `VALIDATION_ERROR` cubre cualquier payload que no pasa las validaciones de DTO (nickname/boardSize/etc), incluida una conexión que manda `room:start`/`card:flip` sin haber creado/unido una sala antes.
+
+## Visibilidad del tablero
+
+El `RoomState` guardado en Redis siempre tiene los símbolos reales de todas las cartas. Nunca se emite ese estado crudo a un cliente: `toPublicRoomState` (en `game-engine`) lo transforma a un `PublicRoomState` donde toda carta no matcheada y no incluida en `flippedIndices` tiene `symbol: null`. Sin esto, cualquier cliente podría leer el tablero completo inspeccionando el tráfico de red (devtools), rompiendo el juego. Se usa en `room:join` (campo `state` del ack) y en `game:started`; `card:flipped` revela el símbolo real de la carta que se acaba de destapar, que es intencional (ambos jugadores ven la cara de la carta al voltearla, como en el juego físico).
 
 ## Validaciones
 
