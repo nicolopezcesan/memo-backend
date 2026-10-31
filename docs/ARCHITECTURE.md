@@ -29,7 +29,7 @@ Regla de dependencia: `game-engine` no depende de nada de NestJS. `GameGateway` 
 
 - `room:{code}` — string JSON: `{ code, status, boardSize, deck, flippedIndices, currentTurnPlayerId, players: [{playerId, nickname, score, connected, sessionId}], createdAt }`. TTL 1h, refrescado en cada operación de la sala.
 - `session:{sessionId}` -> `roomCode` — TTL 30min, refrescado en cada reconexión exitosa.
-- El flip de carta se aplica como Lua script atómico (`EVAL`: leer + validar + escribir en una sola operación) para evitar race conditions entre flips concurrentes.
+- El flip de carta se aplica con `WATCH`/`MULTI`/`EXEC` (reintento optimista): se lee el RoomState, se le aplica la función pura de `game-engine`, y se escribe solo si nadie modificó la key en el medio; si hubo conflicto, se reintenta. Evita duplicar las reglas del juego en Lua (ver ADR 0001) mientras sigue evitando race conditions entre flips concurrentes.
 - Redis cumple dos roles independientes, sin mezclar claves: adapter de Socket.IO (transporte de eventos entre instancias) y repositorio de estado de juego.
 
 ## Contrato de eventos Socket.IO

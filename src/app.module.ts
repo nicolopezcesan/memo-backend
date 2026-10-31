@@ -4,6 +4,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { envValidationSchema } from './config/env.validation.js';
 import { HealthModule } from './health/health.module.js';
+import { RoomModule } from './room/room.module.js';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { HealthModule } from './health/health.module.js';
       validationSchema: envValidationSchema,
     }),
     HealthModule,
+    RoomModule,
   ],
   controllers: [AppController],
   providers: [AppService],
