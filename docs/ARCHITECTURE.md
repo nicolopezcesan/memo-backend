@@ -46,7 +46,7 @@ Cliente -> Servidor (todos con ack, ver ADR 0005 para el formato de respuesta):
 Servidor -> Sala (broadcast, no ack):
 - `room:playerJoined`, `game:started`, `card:flipped`, `turn:result`, `turn:changed`, `player:disconnected`, `player:reconnected`, `game:ended`.
 - Evento `error {code, message}` reservado para fallas asíncronas que no vienen de un ack puntual (ej. error interno durante un turno ya en curso).
-- Códigos de error: `ROOM_NOT_FOUND`, `ROOM_FULL`, `INVALID_TURN`, `INVALID_CARD`, `SESSION_INVALID`, `GAME_NOT_STARTED`.
+- Códigos de error: `VALIDATION_ERROR`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `INVALID_TURN`, `INVALID_CARD`, `SESSION_INVALID`, `GAME_NOT_STARTED`. `VALIDATION_ERROR` cubre cualquier payload que no pasa las validaciones de DTO (nickname/boardSize/etc).
 
 ## Validaciones
 

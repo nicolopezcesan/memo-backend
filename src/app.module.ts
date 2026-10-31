@@ -6,6 +6,7 @@ import { envValidationSchema } from './config/env.validation.js';
 import { HealthModule } from './health/health.module.js';
 import { RoomModule } from './room/room.module.js';
 import { SessionModule } from './session/session.module.js';
+import { GameGatewayModule } from './game-gateway/game-gateway.module.js';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { SessionModule } from './session/session.module.js';
     HealthModule,
     RoomModule,
     SessionModule,
+    GameGatewayModule,
   ],
   controllers: [AppController],
   providers: [AppService],
