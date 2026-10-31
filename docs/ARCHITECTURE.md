@@ -46,7 +46,8 @@ Cliente -> Servidor (todos con ack, ver ADR 0005 para el formato de respuesta):
 
 Servidor -> Sala (broadcast, no ack):
 - `room:playerJoined`, `game:started`, `card:flipped`, `turn:result`, `turn:changed`, `player:disconnected`, `player:reconnected`, `game:ended`.
-- Evento `error {code, message}` reservado para fallas asíncronas que no vienen de un ack puntual (ej. error interno durante un turno ya en curso).
+- `session:resumed` `{state, playerId}`: solo al socket que se reconecta (no es broadcast), emitido desde `handleConnection` al verificar un `sessionToken` válido en el handshake. No hay ack posible en un lifecycle hook de conexión, así que este evento es la única forma de "devolver" el estado restaurado.
+- Evento `error {code, message}` reservado para fallas asíncronas que no vienen de un ack puntual (ej. `sessionToken` presente pero inválido/expirado en el handshake -> `SESSION_INVALID`, o un error interno durante un turno ya en curso). Si no viene `sessionToken` en el handshake, no se emite nada: es una conexión nueva normal que todavía va a hacer `room:create`/`room:join`.
 - Códigos de error: `VALIDATION_ERROR`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `NOT_HOST`, `GAME_ALREADY_STARTED`, `NOT_ENOUGH_PLAYERS`, `INVALID_TURN`, `INVALID_CARD`, `SESSION_INVALID`, `GAME_NOT_STARTED`. `VALIDATION_ERROR` cubre cualquier payload que no pasa las validaciones de DTO (nickname/boardSize/etc), incluida una conexión que manda `room:start`/`card:flip` sin haber creado/unido una sala antes.
 
 ## Visibilidad del tablero
@@ -61,7 +62,12 @@ El `RoomState` guardado en Redis siempre tiene los símbolos reales de todas las
 
 ## Reconexión
 
-El cliente envía `sessionToken` en `handshake.auth` al conectar. `handleConnection` verifica el token vía `SessionService` + `session:{id}` en Redis; si es válido, marca `connected:true`, hace `socket.join(roomCode)` y devuelve el estado completo actual. `handleDisconnect` marca `connected:false` sin borrar estado ni resetear turno; si nadie reconecta antes de que expire el TTL, la sala se limpia sola.
+El cliente envía `sessionToken` en `handshake.auth` al conectar. `handleConnection`:
+- Sin `sessionToken`: no hace nada, conexión nueva normal.
+- Con `sessionToken` inválido/expirado (`SessionService.verify` devuelve `null`) o cuya sala ya no existe en Redis: emite `error {code: 'SESSION_INVALID'}` solo a ese socket.
+- Con `sessionToken` válido y sala viva: marca `connected:true` en el `RoomState`, hace `socket.join(roomCode)`, bindea `socket.data` (igual que `room:create`/`room:join`), emite `session:resumed {state, playerId}` solo a ese socket (es el único medio de "devolver" el estado, un lifecycle hook no tiene ack), y emite `player:reconnected {playerId}` al resto de la sala.
+
+`handleDisconnect` marca `connected:false` sin borrar estado ni resetear turno, y emite `player:disconnected {playerId}` al resto de la sala; si la sala ya no existe (TTL vencido justo antes del disconnect) no hace nada. Si nadie reconecta antes de que expire el TTL, la sala se limpia sola.
 
 ## Decisiones técnicas
 
