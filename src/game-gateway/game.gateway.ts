@@ -32,6 +32,7 @@ import { RoomCreateDto } from './dto/room-create.dto.js';
 import { RoomJoinDto } from './dto/room-join.dto.js';
 import { bindSocketIdentity, getSocketIdentity } from './socket-identity.js';
 import { validateDto } from './validate-dto.js';
+import { withAckErrorHandling } from './with-ack-error-handling.js';
 
 type RoomCreateAck = Ack<{ roomCode: string; sessionToken: string; playerId: string }>;
 type RoomJoinAck = Ack<{
@@ -107,40 +108,42 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() body: unknown,
     @ConnectedSocket() client: Socket,
   ): Promise<RoomCreateAck> {
-    const validation = await validateDto(RoomCreateDto, body);
-    if (!validation.ok) {
-      return errAck('VALIDATION_ERROR', validation.message);
-    }
-    const { dto } = validation;
+    return withAckErrorHandling('room:create', async () => {
+      const validation = await validateDto(RoomCreateDto, body);
+      if (!validation.ok) {
+        return errAck('VALIDATION_ERROR', validation.message);
+      }
+      const { dto } = validation;
 
-    const playerId = randomUUID();
-    const roomCode = await this.rooms.generateUniqueCode();
-    const session = await this.sessions.issue(roomCode, playerId);
+      const playerId = randomUUID();
+      const roomCode = await this.rooms.generateUniqueCode();
+      const session = await this.sessions.issue(roomCode, playerId);
 
-    const room: RoomState = {
-      code: roomCode,
-      status: 'waiting',
-      boardSize: dto.boardSize,
-      deck: [],
-      flippedIndices: [],
-      currentTurnPlayerId: playerId,
-      players: [
-        {
-          playerId,
-          nickname: dto.nickname,
-          score: 0,
-          connected: true,
-          sessionId: session.sessionId,
-        },
-      ],
-      createdAt: Date.now(),
-    };
-    await this.rooms.save(room);
+      const room: RoomState = {
+        code: roomCode,
+        status: 'waiting',
+        boardSize: dto.boardSize,
+        deck: [],
+        flippedIndices: [],
+        currentTurnPlayerId: playerId,
+        players: [
+          {
+            playerId,
+            nickname: dto.nickname,
+            score: 0,
+            connected: true,
+            sessionId: session.sessionId,
+          },
+        ],
+        createdAt: Date.now(),
+      };
+      await this.rooms.save(room);
 
-    await client.join(roomCode);
-    bindSocketIdentity(client, { playerId, roomCode });
+      await client.join(roomCode);
+      bindSocketIdentity(client, { playerId, roomCode });
 
-    return { ok: true, roomCode, sessionToken: session.sessionToken, playerId };
+      return { ok: true, roomCode, sessionToken: session.sessionToken, playerId };
+    });
   }
 
   @SubscribeMessage('room:join')
@@ -148,83 +151,94 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() body: unknown,
     @ConnectedSocket() client: Socket,
   ): Promise<RoomJoinAck> {
-    const validation = await validateDto(RoomJoinDto, body);
-    if (!validation.ok) {
-      return errAck('VALIDATION_ERROR', validation.message);
-    }
-    const { dto } = validation;
-
-    const existing = await this.rooms.get(dto.roomCode);
-    if (!existing) {
-      return errAck('ROOM_NOT_FOUND', `No room found for code ${dto.roomCode}`);
-    }
-    if (existing.players.length >= 2) {
-      return errAck('ROOM_FULL', `Room ${dto.roomCode} already has 2 players`);
-    }
-
-    const playerId = randomUUID();
-    const session = await this.sessions.issue(dto.roomCode, playerId);
-
-    let state: RoomState;
-    try {
-      state = await this.rooms.updateAtomic(dto.roomCode, (room) => {
-        if (room.players.length >= 2) {
-          // Re-checked here in case another join raced past the check above.
-          throw new RoomFullError(room.code);
-        }
-        return {
-          ...room,
-          players: [
-            ...room.players,
-            {
-              playerId,
-              nickname: dto.nickname,
-              score: 0,
-              connected: true,
-              sessionId: session.sessionId,
-            },
-          ],
-        };
-      });
-    } catch (error) {
-      if (error instanceof RoomFullError) {
-        return errAck('ROOM_FULL', error.message);
+    return withAckErrorHandling('room:join', async () => {
+      const validation = await validateDto(RoomJoinDto, body);
+      if (!validation.ok) {
+        return errAck('VALIDATION_ERROR', validation.message);
       }
-      throw error;
-    }
+      const { dto } = validation;
 
-    await client.join(dto.roomCode);
-    bindSocketIdentity(client, { playerId, roomCode: dto.roomCode });
-    client.to(dto.roomCode).emit('room:playerJoined', {
-      playerId,
-      nickname: dto.nickname,
-      players: state.players,
+      const existing = await this.rooms.get(dto.roomCode);
+      if (!existing) {
+        return errAck('ROOM_NOT_FOUND', `No room found for code ${dto.roomCode}`);
+      }
+      if (existing.players.length >= 2) {
+        return errAck('ROOM_FULL', `Room ${dto.roomCode} already has 2 players`);
+      }
+
+      const playerId = randomUUID();
+      const session = await this.sessions.issue(dto.roomCode, playerId);
+
+      let state: RoomState;
+      try {
+        state = await this.rooms.updateAtomic(dto.roomCode, (room) => {
+          if (room.players.length >= 2) {
+            // Re-checked here in case another join raced past the check above.
+            throw new RoomFullError(room.code);
+          }
+          return {
+            ...room,
+            players: [
+              ...room.players,
+              {
+                playerId,
+                nickname: dto.nickname,
+                score: 0,
+                connected: true,
+                sessionId: session.sessionId,
+              },
+            ],
+          };
+        });
+      } catch (error) {
+        if (error instanceof RoomFullError) {
+          return errAck('ROOM_FULL', error.message);
+        }
+        throw error;
+      }
+
+      await client.join(dto.roomCode);
+      bindSocketIdentity(client, { playerId, roomCode: dto.roomCode });
+      client.to(dto.roomCode).emit('room:playerJoined', {
+        playerId,
+        nickname: dto.nickname,
+        players: state.players,
+      });
+
+      return {
+        ok: true,
+        sessionToken: session.sessionToken,
+        playerId,
+        state: toPublicRoomState(state),
+      };
     });
-
-    return { ok: true, sessionToken: session.sessionToken, playerId, state: toPublicRoomState(state) };
   }
 
   @SubscribeMessage('room:start')
   async handleRoomStart(@ConnectedSocket() client: Socket): Promise<RoomStartAck> {
-    const identity = getSocketIdentity(client);
-    if (!identity) return NOT_IN_ROOM;
+    return withAckErrorHandling('room:start', async () => {
+      const identity = getSocketIdentity(client);
+      if (!identity) return NOT_IN_ROOM;
 
-    try {
-      const state = await this.game.startGame(identity.roomCode, identity.playerId);
-      this.server.to(identity.roomCode).emit('game:started', { state: toPublicRoomState(state) });
-      return { ok: true };
-    } catch (error) {
-      if (error instanceof NotHostError) {
-        return errAck('NOT_HOST', error.message);
+      try {
+        const state = await this.game.startGame(identity.roomCode, identity.playerId);
+        this.server
+          .to(identity.roomCode)
+          .emit('game:started', { state: toPublicRoomState(state) });
+        return { ok: true };
+      } catch (error) {
+        if (error instanceof NotHostError) {
+          return errAck('NOT_HOST', error.message);
+        }
+        if (error instanceof GameAlreadyStartedError) {
+          return errAck('GAME_ALREADY_STARTED', error.message);
+        }
+        if (error instanceof NotEnoughPlayersError) {
+          return errAck('NOT_ENOUGH_PLAYERS', error.message);
+        }
+        throw error;
       }
-      if (error instanceof GameAlreadyStartedError) {
-        return errAck('GAME_ALREADY_STARTED', error.message);
-      }
-      if (error instanceof NotEnoughPlayersError) {
-        return errAck('NOT_ENOUGH_PLAYERS', error.message);
-      }
-      throw error;
-    }
+    });
   }
 
   @SubscribeMessage('card:flip')
@@ -232,67 +246,72 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() body: unknown,
     @ConnectedSocket() client: Socket,
   ): Promise<CardFlipAck> {
-    const identity = getSocketIdentity(client);
-    if (!identity) return NOT_IN_ROOM;
+    return withAckErrorHandling('card:flip', async () => {
+      const identity = getSocketIdentity(client);
+      if (!identity) return NOT_IN_ROOM;
 
-    const validation = await validateDto(CardFlipDto, body);
-    if (!validation.ok) {
-      return errAck('VALIDATION_ERROR', validation.message);
-    }
-    const { dto } = validation;
+      const validation = await validateDto(CardFlipDto, body);
+      if (!validation.ok) {
+        return errAck('VALIDATION_ERROR', validation.message);
+      }
+      const { dto } = validation;
 
-    try {
-      const result = await this.game.flipCard(
-        identity.roomCode,
-        identity.playerId,
-        dto.cardIndex,
-      );
-
-      this.server.to(identity.roomCode).emit('card:flipped', {
-        cardIndex: dto.cardIndex,
-        symbol: result.state.deck[dto.cardIndex].symbol,
-        byPlayerId: identity.playerId,
-      });
-
-      if (result.matched !== undefined && result.comparedIndices) {
-        const scores = Object.fromEntries(
-          result.state.players.map((p) => [p.playerId, p.score]),
+      try {
+        const result = await this.game.flipCard(
+          identity.roomCode,
+          identity.playerId,
+          dto.cardIndex,
         );
-        this.server.to(identity.roomCode).emit('turn:result', {
-          matched: result.matched,
-          cardIndices: result.comparedIndices,
-          scores,
+
+        this.server.to(identity.roomCode).emit('card:flipped', {
+          cardIndex: dto.cardIndex,
+          symbol: result.state.deck[dto.cardIndex].symbol,
+          byPlayerId: identity.playerId,
         });
 
-        if (!result.matched) {
-          this.server.to(identity.roomCode).emit('turn:changed', {
-            currentTurnPlayerId: result.state.currentTurnPlayerId,
-          });
-        }
-
-        if (result.gameEnded) {
-          const finalScores = Object.fromEntries(
+        if (result.matched !== undefined && result.comparedIndices) {
+          const scores = Object.fromEntries(
             result.state.players.map((p) => [p.playerId, p.score]),
           );
-          this.server.to(identity.roomCode).emit('game:ended', {
-            scores: finalScores,
-            winnerId: result.winnerId ?? null,
+          this.server.to(identity.roomCode).emit('turn:result', {
+            matched: result.matched,
+            cardIndices: result.comparedIndices,
+            scores,
           });
-        }
-      }
 
-      return { ok: true };
-    } catch (error) {
-      if (error instanceof GameNotStartedError) {
-        return errAck('GAME_NOT_STARTED', error.message);
+          if (!result.matched) {
+            this.server.to(identity.roomCode).emit('turn:changed', {
+              currentTurnPlayerId: result.state.currentTurnPlayerId,
+            });
+          }
+
+          if (result.gameEnded) {
+            const finalScores = Object.fromEntries(
+              result.state.players.map((p) => [p.playerId, p.score]),
+            );
+            this.server.to(identity.roomCode).emit('game:ended', {
+              scores: finalScores,
+              winnerId: result.winnerId ?? null,
+            });
+          }
+        }
+
+        return { ok: true };
+      } catch (error) {
+        if (error instanceof GameNotStartedError) {
+          return errAck('GAME_NOT_STARTED', error.message);
+        }
+        if (error instanceof NotPlayersTurnError) {
+          return errAck('INVALID_TURN', error.message);
+        }
+        if (
+          error instanceof InvalidCardIndexError ||
+          error instanceof CardAlreadyMatchedError
+        ) {
+          return errAck('INVALID_CARD', error.message);
+        }
+        throw error;
       }
-      if (error instanceof NotPlayersTurnError) {
-        return errAck('INVALID_TURN', error.message);
-      }
-      if (error instanceof InvalidCardIndexError || error instanceof CardAlreadyMatchedError) {
-        return errAck('INVALID_CARD', error.message);
-      }
-      throw error;
-    }
+    });
   }
 }
