@@ -27,10 +27,16 @@
     "@nestjs/core": "^12.0.1",
     "@nestjs/jwt": "^12.0.3",
     "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/platform-socket.io": "^12.3.2",
+    "@nestjs/websockets": "^12.3.2",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
     "ioredis": "^6.0.0",
     "joi": "^18.3.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.4"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",
@@ -44,6 +50,7 @@
     "oxlint": "^1.58.0",
     "oxlint-tsgolint": "^7.0.2001",
     "prettier": "^3.4.2",
+    "socket.io-client": "^4.8.4",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "typescript": "^6.0.2",
