@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Logger } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -50,6 +51,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   private readonly server!: Server;
 
+  private readonly logger = new Logger(GameGateway.name);
+
   constructor(
     private readonly rooms: RoomRepository,
     private readonly sessions: SessionService,
@@ -63,6 +66,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const payload = await this.sessions.verify(sessionToken);
     const room = payload ? await this.rooms.get(payload.roomCode) : null;
     if (!payload || !room) {
+      this.logger.warn(`session:invalid sessionToken=${sessionToken.slice(0, 8)}…`);
       client.emit('error', {
         code: 'SESSION_INVALID',
         message: 'Session token is invalid or expired',
@@ -80,6 +84,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await client.join(payload.roomCode);
     bindSocketIdentity(client, { playerId: payload.playerId, roomCode: payload.roomCode });
 
+    this.logger.log(
+      `session:resumed roomCode=${payload.roomCode} playerId=${payload.playerId} sessionId=${payload.sessionId}`,
+    );
     client.emit('session:resumed', { state: toPublicRoomState(state), playerId: payload.playerId });
     client.to(payload.roomCode).emit('player:reconnected', { playerId: payload.playerId });
   }
@@ -100,6 +107,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return; // Room already expired/cleaned up; nothing to mark.
     }
 
+    this.logger.log(
+      `player:disconnected roomCode=${identity.roomCode} playerId=${identity.playerId}`,
+    );
     client.to(identity.roomCode).emit('player:disconnected', { playerId: identity.playerId });
   }
 
@@ -142,6 +152,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       await client.join(roomCode);
       bindSocketIdentity(client, { playerId, roomCode });
 
+      this.logger.log(
+        `room:create roomCode=${roomCode} playerId=${playerId} sessionId=${session.sessionId}`,
+      );
       return { ok: true, roomCode, sessionToken: session.sessionToken, playerId };
     });
   }
@@ -199,6 +212,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await client.join(dto.roomCode);
       bindSocketIdentity(client, { playerId, roomCode: dto.roomCode });
+      this.logger.log(
+        `room:join roomCode=${dto.roomCode} playerId=${playerId} sessionId=${session.sessionId}`,
+      );
       client.to(dto.roomCode).emit('room:playerJoined', {
         playerId,
         nickname: dto.nickname,
@@ -222,6 +238,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       try {
         const state = await this.game.startGame(identity.roomCode, identity.playerId);
+        this.logger.log(
+          `game:started roomCode=${identity.roomCode} playerId=${identity.playerId} boardSize=${state.boardSize}`,
+        );
         this.server
           .to(identity.roomCode)
           .emit('game:started', { state: toPublicRoomState(state) });
@@ -288,6 +307,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           if (result.gameEnded) {
             const finalScores = Object.fromEntries(
               result.state.players.map((p) => [p.playerId, p.score]),
+            );
+            this.logger.log(
+              `game:ended roomCode=${identity.roomCode} winnerId=${result.winnerId ?? 'draw'}`,
             );
             this.server.to(identity.roomCode).emit('game:ended', {
               scores: finalScores,
