@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.module.js';
 import type { RoomState } from '../game-engine/index.js';
 import { generateRoomCode } from './room-code.js';
+import { RoomNotFoundError } from './room.errors.js';
 
 export const ROOM_TTL_SECONDS = 60 * 60; // 1h, refreshed on every write
 const MAX_CODE_GENERATION_ATTEMPTS = 10;
@@ -74,7 +75,7 @@ export class RoomRepository {
         const raw = await connection.get(key);
         if (!raw) {
           await connection.unwatch();
-          throw new Error(`Room ${code} not found`);
+          throw new RoomNotFoundError(code);
         }
 
         const nextState = updateFn(JSON.parse(raw) as RoomState);

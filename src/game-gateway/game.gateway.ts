@@ -5,6 +5,8 @@ import {
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
+  type OnGatewayConnection,
+  type OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';
 import type { PublicRoomState, RoomState } from '../game-engine/index.js';
@@ -21,7 +23,7 @@ import {
   NotHostError,
 } from '../game/game.errors.js';
 import { GameService } from '../game/game.service.js';
-import { RoomFullError } from '../room/room.errors.js';
+import { RoomFullError, RoomNotFoundError } from '../room/room.errors.js';
 import { RoomRepository } from '../room/room.repository.js';
 import { SessionService } from '../session/session.service.js';
 import { errAck, type Ack } from './ack.js';
@@ -43,7 +45,7 @@ type CardFlipAck = Ack<object>;
 const NOT_IN_ROOM = errAck('VALIDATION_ERROR', 'This connection has not created or joined a room yet');
 
 @WebSocketGateway({ cors: { origin: process.env.CORS_ORIGIN } })
-export class GameGateway {
+export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   private readonly server!: Server;
 
@@ -52,6 +54,53 @@ export class GameGateway {
     private readonly sessions: SessionService,
     private readonly game: GameService,
   ) {}
+
+  async handleConnection(client: Socket): Promise<void> {
+    const sessionToken = client.handshake.auth.sessionToken as string | undefined;
+    if (!sessionToken) return; // Brand new connection; will room:create/room:join.
+
+    const payload = await this.sessions.verify(sessionToken);
+    const room = payload ? await this.rooms.get(payload.roomCode) : null;
+    if (!payload || !room) {
+      client.emit('error', {
+        code: 'SESSION_INVALID',
+        message: 'Session token is invalid or expired',
+      });
+      return;
+    }
+
+    const state = await this.rooms.updateAtomic(payload.roomCode, (current) => ({
+      ...current,
+      players: current.players.map((p) =>
+        p.playerId === payload.playerId ? { ...p, connected: true } : p,
+      ),
+    }));
+
+    await client.join(payload.roomCode);
+    bindSocketIdentity(client, { playerId: payload.playerId, roomCode: payload.roomCode });
+
+    client.emit('session:resumed', { state: toPublicRoomState(state), playerId: payload.playerId });
+    client.to(payload.roomCode).emit('player:reconnected', { playerId: payload.playerId });
+  }
+
+  async handleDisconnect(client: Socket): Promise<void> {
+    const identity = getSocketIdentity(client);
+    if (!identity) return;
+
+    try {
+      await this.rooms.updateAtomic(identity.roomCode, (room) => ({
+        ...room,
+        players: room.players.map((p) =>
+          p.playerId === identity.playerId ? { ...p, connected: false } : p,
+        ),
+      }));
+    } catch (error) {
+      if (!(error instanceof RoomNotFoundError)) throw error;
+      return; // Room already expired/cleaned up; nothing to mark.
+    }
+
+    client.to(identity.roomCode).emit('player:disconnected', { playerId: identity.playerId });
+  }
 
   @SubscribeMessage('room:create')
   async handleRoomCreate(
