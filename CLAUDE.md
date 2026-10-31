@@ -4,7 +4,7 @@ Guía de trabajo para este repo. Ver `docs/PRD.md`, `docs/ARCHITECTURE.md` y `do
 
 ## Stack
 
-NestJS + TypeScript (strict), Socket.IO, Redis (`ioredis` + `@socket.io/redis-adapter`), `@nestjs/jwt`, Docker/docker-compose, Jest.
+NestJS 12 + TypeScript 6 (strict, ESM), Socket.IO, Redis (`ioredis` + `@socket.io/redis-adapter`), `@nestjs/jwt`, Docker/docker-compose, Vitest + oxlint.
 
 ## Convenciones
 
@@ -17,9 +17,10 @@ NestJS + TypeScript (strict), Socket.IO, Redis (`ioredis` + `@socket.io/redis-ad
 ## Comandos
 
 - `docker-compose up` — levanta backend + Redis en dev.
-- `npm run test` — unit tests (Jest).
-- `npm run test:e2e` — e2e con `socket.io-client` real.
-- `npm run lint` — ESLint.
+- `npm run test` — unit tests (Vitest).
+- `npm run test:e2e` — e2e (Vitest) con `socket.io-client` real.
+- `npm run lint` — oxlint.
+- `npx nest build` — type-check real; correr antes de dar algo por terminado, porque Vitest no type-checka.
 
 ## Flujo de trabajo con issues
 
