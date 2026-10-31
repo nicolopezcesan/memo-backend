@@ -2,12 +2,14 @@
 
 ## Stack
 
-- NestJS + TypeScript (strict mode).
+- Node 26 LTS, npm, NestJS + TypeScript (strict mode).
 - Socket.IO (via `@nestjs/platform-socket.io`) para realtime.
 - Redis (`ioredis`) como store de estado + `@socket.io/redis-adapter` para distribuir eventos entre instancias.
 - `@nestjs/jwt` para los session tokens de reconexión.
+- `@nestjs/config` + `.env` con validación de schema (Joi o class-validator) para env vars (puerto, Redis URL, JWT secret, CORS origin).
 - Docker / docker-compose para desarrollo (backend + redis).
 - Jest para unit tests; `socket.io-client` real para e2e.
+- GitHub Actions desde la épica 1: workflow de `npm ci` + lint + unit tests en cada push/PR.
 
 ## Módulos
 
@@ -28,16 +30,25 @@ Regla de dependencia: `game-engine` no depende de nada de NestJS. `GameGateway` 
 
 ## Contrato de eventos Socket.IO
 
-Cliente -> Servidor (con ack):
-- `room:create` `{nickname, boardSize}` -> `{roomCode, sessionToken, playerId}`
-- `room:join` `{roomCode, nickname}` -> `{sessionToken, playerId, state}`
-- `room:start` `{roomCode}` (solo host, requiere 2 jugadores conectados)
-- `card:flip` `{roomCode, cardIndex}`
+Namespace default (`/`), sin namespace custom. CORS leído de env var (`CORS_ORIGIN`, allow-list; en dev default abierto a localhost del frontend).
+
+Cliente -> Servidor (todos con ack, ver ADR 0005 para el formato de respuesta):
+- `room:create` `{nickname, boardSize}` -> ack `{ok:true, roomCode, sessionToken, playerId}` | `{ok:false, code, message}`
+- `room:join` `{roomCode, nickname}` -> ack `{ok:true, sessionToken, playerId, state}` | `{ok:false, code, message}`
+- `room:start` `{roomCode}` (solo host, requiere 2 jugadores conectados) -> ack `{ok:true}` | `{ok:false, code, message}`
+- `card:flip` `{roomCode, cardIndex}` -> ack `{ok:true}` | `{ok:false, code, message}` (el resultado de la jugada se emite por broadcast, el ack solo confirma si la jugada fue aceptada)
 - Reconexión: `sessionToken` viaja en `handshake.auth`, no como evento separado.
 
-Servidor -> Sala:
-- `room:playerJoined`, `game:started`, `card:flipped`, `turn:result`, `turn:changed`, `player:disconnected`, `player:reconnected`, `game:ended`, `error {code, message}`.
+Servidor -> Sala (broadcast, no ack):
+- `room:playerJoined`, `game:started`, `card:flipped`, `turn:result`, `turn:changed`, `player:disconnected`, `player:reconnected`, `game:ended`.
+- Evento `error {code, message}` reservado para fallas asíncronas que no vienen de un ack puntual (ej. error interno durante un turno ya en curso).
 - Códigos de error: `ROOM_NOT_FOUND`, `ROOM_FULL`, `INVALID_TURN`, `INVALID_CARD`, `SESSION_INVALID`, `GAME_NOT_STARTED`.
+
+## Validaciones
+
+- `nickname`: 1-20 caracteres, alfanumérico + espacios/guiones, trimmed. Validado con `class-validator` en el DTO.
+- `boardSize`: entero par, entre 4 y 36. Validado en el DTO y de nuevo en `game-engine` (`createBoard`) como invariante del dominio.
+- Código de sala: 6 caracteres alfanuméricos mayúsculas, excluyendo `0/O/1/I` para evitar ambigüedad visual al tipearlo. Generado con retry en caso de colisión contra Redis.
 
 ## Reconexión
 
