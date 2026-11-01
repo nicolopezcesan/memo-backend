@@ -99,10 +99,16 @@ describe('GameGateway (e2e)', () => {
     });
     expect(joinAck.ok).toBe(true);
     expect(joinAck.state?.players).toHaveLength(2);
+    for (const player of joinAck.state?.players ?? []) {
+      expect(player).not.toHaveProperty('sessionId');
+    }
 
     const event = await playerJoined;
     expect(event.nickname).toBe('Bob');
     expect(event.players).toHaveLength(2);
+    for (const player of event.players) {
+      expect(player).not.toHaveProperty('sessionId');
+    }
   });
 
   it('rejects room:join for a room code that does not exist', async () => {
