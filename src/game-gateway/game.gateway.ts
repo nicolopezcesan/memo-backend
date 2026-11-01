@@ -49,6 +49,7 @@ type RoomJoinAck = Ack<{
 }>;
 type RoomStartAck = Ack<object>;
 type CardFlipAck = Ack<object>;
+type RoomLeaveAck = Ack<object>;
 
 const NOT_IN_ROOM = errAck('VALIDATION_ERROR', 'This connection has not created or joined a room yet');
 
@@ -346,6 +347,28 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
         throw error;
       }
+    });
+  }
+
+  @SubscribeMessage('room:leave')
+  async handleRoomLeave(@ConnectedSocket() client: Socket): Promise<RoomLeaveAck> {
+    return withAckErrorHandling('room:leave', async () => {
+      const identity = getSocketIdentity(client);
+      if (!identity) return NOT_IN_ROOM;
+
+      // A deliberate leave ends the game for both players, unlike a mere
+      // disconnect (which keeps the room alive for a reconnect). Deleting
+      // it also makes the remaining player's eventual reconnect attempt
+      // get SESSION_INVALID for free, via the existing !room check in
+      // handleConnection.
+      await this.rooms.delete(identity.roomCode);
+      this.logger.log(
+        `room:leave roomCode=${identity.roomCode} playerId=${identity.playerId}`,
+      );
+      client.to(identity.roomCode).emit('player:left', { playerId: identity.playerId });
+      await client.leave(identity.roomCode);
+
+      return { ok: true };
     });
   }
 }
