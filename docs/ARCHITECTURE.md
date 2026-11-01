@@ -50,9 +50,13 @@ Servidor -> Sala (broadcast, no ack):
 - Evento `error {code, message}` reservado para fallas asíncronas que no vienen de un ack puntual (ej. `sessionToken` presente pero inválido/expirado en el handshake -> `SESSION_INVALID`, o un error interno durante un turno ya en curso). Si no viene `sessionToken` en el handshake, no se emite nada: es una conexión nueva normal que todavía va a hacer `room:create`/`room:join`.
 - Códigos de error: `VALIDATION_ERROR`, `ROOM_NOT_FOUND`, `ROOM_FULL`, `NOT_HOST`, `GAME_ALREADY_STARTED`, `NOT_ENOUGH_PLAYERS`, `INVALID_TURN`, `INVALID_CARD`, `SESSION_INVALID`, `GAME_NOT_STARTED`, `INTERNAL_ERROR`. `VALIDATION_ERROR` cubre cualquier payload que no pasa las validaciones de DTO (nickname/boardSize/etc), incluida una conexión que manda `room:start`/`card:flip` sin haber creado/unido una sala antes. `INTERNAL_ERROR` es el fallback de último recurso: cualquier excepción no prevista por el handler (ver `withAckErrorHandling` más abajo) se convierte en este código en vez de dejar el ack sin resolver.
 
-## Visibilidad del tablero
+## Visibilidad del tablero y de los jugadores
 
-El `RoomState` guardado en Redis siempre tiene los símbolos reales de todas las cartas. Nunca se emite ese estado crudo a un cliente: `toPublicRoomState` (en `game-engine`) lo transforma a un `PublicRoomState` donde toda carta no matcheada y no incluida en `flippedIndices` tiene `symbol: null`. Sin esto, cualquier cliente podría leer el tablero completo inspeccionando el tráfico de red (devtools), rompiendo el juego. Se usa en `room:join` (campo `state` del ack) y en `game:started`; `card:flipped` revela el símbolo real de la carta que se acaba de destapar, que es intencional (ambos jugadores ven la cara de la carta al voltearla, como en el juego físico).
+El `RoomState` guardado en Redis siempre tiene los símbolos reales de todas las cartas y el `sessionId` de cada jugador. Nunca se emite ese estado crudo a un cliente: `toPublicRoomState` (en `game-engine`) lo transforma a un `PublicRoomState` donde:
+- toda carta no matcheada y no incluida en `flippedIndices` tiene `symbol: null` (sin esto, cualquier cliente podría leer el tablero completo inspeccionando el tráfico de red, rompiendo el juego);
+- cada jugador pierde su `sessionId` (vía `toPublicPlayer`) — es un identificador server-internal para el mapeo `session:{id}` en Redis, sin motivo para ser visible al otro jugador de la sala.
+
+Se usa en `room:join` (campo `state` del ack), `room:playerJoined` (campo `players`), `game:started` y `session:resumed`. `card:flipped` revela el símbolo real de la carta que se acaba de destapar, que es intencional (ambos jugadores ven la cara de la carta al voltearla, como en el juego físico).
 
 ## Validaciones
 

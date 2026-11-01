@@ -15,6 +15,7 @@ import {
   CardAlreadyMatchedError,
   InvalidCardIndexError,
   NotPlayersTurnError,
+  toPublicPlayer,
   toPublicRoomState,
 } from '../game-engine/index.js';
 import {
@@ -218,7 +219,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.to(dto.roomCode).emit('room:playerJoined', {
         playerId,
         nickname: dto.nickname,
-        players: state.players,
+        players: state.players.map(toPublicPlayer),
       });
 
       return {
