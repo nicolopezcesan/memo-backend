@@ -36,7 +36,12 @@ import { bindSocketIdentity, getSocketIdentity } from './socket-identity.js';
 import { validateDto } from './validate-dto.js';
 import { withAckErrorHandling } from './with-ack-error-handling.js';
 
-type RoomCreateAck = Ack<{ roomCode: string; sessionToken: string; playerId: string }>;
+type RoomCreateAck = Ack<{
+  roomCode: string;
+  sessionToken: string;
+  playerId: string;
+  state: PublicRoomState;
+}>;
 type RoomJoinAck = Ack<{
   sessionToken: string;
   playerId: string;
@@ -156,7 +161,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(
         `room:create roomCode=${roomCode} playerId=${playerId} sessionId=${session.sessionId}`,
       );
-      return { ok: true, roomCode, sessionToken: session.sessionToken, playerId };
+      return {
+        ok: true,
+        roomCode,
+        sessionToken: session.sessionToken,
+        playerId,
+        state: toPublicRoomState(room),
+      };
     });
   }
 
