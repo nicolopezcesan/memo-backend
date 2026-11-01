@@ -37,7 +37,7 @@ Regla de dependencia: `game-engine` no depende de nada de NestJS. `GameGateway` 
 Namespace default (`/`), sin namespace custom. CORS leído de env var (`CORS_ORIGIN`, allow-list; en dev default abierto a localhost del frontend).
 
 Cliente -> Servidor (todos con ack, ver ADR 0005 para el formato de respuesta):
-- `room:create` `{nickname, boardSize}` -> ack `{ok:true, roomCode, sessionToken, playerId}` | `{ok:false, code, message}`
+- `room:create` `{nickname, boardSize}` -> ack `{ok:true, roomCode, sessionToken, playerId, state}` | `{ok:false, code, message}` (incluye `state` igual que `room:join`, para que el host tenga su propio `RoomState` sin esperar a que alguien más haga algo)
 - `room:join` `{roomCode, nickname}` -> ack `{ok:true, sessionToken, playerId, state}` | `{ok:false, code, message}` (`state` es el `PublicRoomState`, símbolos ocultos salvo cartas matcheadas/flippeadas)
 - `room:start` `{}` (solo host, requiere 2 jugadores conectados) -> ack `{ok:true}` | `{ok:false, code, message}`
 - `card:flip` `{cardIndex}` -> ack `{ok:true}` | `{ok:false, code, message}` (el resultado de la jugada se emite por broadcast, el ack solo confirma si la jugada fue aceptada)
